@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高压射流卸压增透系统 - 离线模式</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body { background-color: #0b1121; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+        .panel { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 16px; box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; opacity: 0.9; filter: grayscale(20%); }
+        .panel-title { color: #64748b; font-size: 1.1rem; border-left: 4px solid #475569; padding-left: 8px; margin-bottom: 12px; display: flex; align-items: center; flex-shrink: 0; }
+        
+        .model-area { background-color: #000; position: relative; box-shadow: inset 0 0 40px rgba(0,0,0,0.8); border-color: #334155 !important; }
+        input[type="radio"] { accent-color: #475569; width: 16px; height: 16px; cursor: not-allowed; }
+        input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        .log-container::-webkit-scrollbar { width: 4px; }
+        .log-container::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+
+        /* ====== 监控视频特效 - 离线状态 ====== */
+        .cctv-container { position: relative; background: #050505; overflow: hidden; border-radius: 4px; border: 1px solid #334155; display: flex; flex-direction: column; align-items: center; justify-content: center;}
+        .cctv-overlay { position: absolute; inset: 0; background: repeating-linear-gradient( 0deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 1px, transparent 1px, transparent 2px ); pointer-events: none; }
+        .cctv-rec { position: absolute; top: 4px; right: 6px; color: #64748b; font-size: 9px; font-weight: bold; display: flex; align-items: center; gap: 3px; letter-spacing: 1px; z-index: 10; }
+        
+        /* 报警灯 - 离线熄灭 */
+        .alarm-light { width: 12px; height: 12px; border-radius: 50%; display: inline-block; transition: all 0.3s; }
+        .alarm-light.inactive { background-color: #1e293b; box-shadow: inset 0 0 3px #000; }
+
+        /* 自定义高级滑块 */
+        input[type=range] { -webkit-appearance: none; background: transparent; cursor: not-allowed; opacity: 0.5;}
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; background: #1e293b; border-radius: 3px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #64748b; margin-top: -4px; box-shadow: 0 0 5px rgba(0,0,0,0.8); }
+
+        .offline-blink { animation: slowBlink 2s infinite; }
+        @keyframes slowBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    </style>
+</head>
+<body class="h-screen p-4 flex flex-col relative">
+
+    <!-- 全局离线遮罩覆盖层 (可选，用于增加压抑感) -->
+    <div class="absolute inset-0 pointer-events-none bg-red-900/5 mix-blend-overlay z-50"></div>
+
+    <header class="text-center mb-4 relative shrink-0">
+        <h1 class="text-3xl font-bold text-gray-500 inline-block px-12 py-2 border-b-2 border-gray-700 tracking-wider">
+            高压射流卸压增透系统远程智能监控 <span class="text-red-500 text-2xl ml-2 offline-blink">[ 离线模式 ]</span>
+        </h1>
+    </header>
+
+    <main class="grid grid-cols-12 gap-4 flex-1 min-h-0">
+        
+        <div class="col-span-3 flex flex-col gap-4 h-full">
+            <div class="panel flex-1">
+                <div class="panel-title">核心监测数据 (连接丢失)</div>
+                <div class="flex items-center mb-2 flex-1 min-h-0 opacity-50">
+                    <div id="pressureGauge" class="w-28 h-28 shrink-0"></div>
+                    <div class="ml-4 text-sm flex-1">
+                        <div class="text-gray-500">射流压力</div>
+                        <div class="text-gray-400 text-2xl font-bold font-mono transition-all duration-300" id="pressureText">0.0</div>
+                        <div class="text-xs text-gray-600">目标：<span class="text-gray-500" id="targetPressureText">-- MPa</span></div>
+                    </div>
+                </div>
+                <div class="flex items-center mb-2 flex-1 min-h-0 opacity-50">
+                    <div id="flowGauge" class="w-28 h-28 shrink-0"></div>
+                    <div class="ml-4 text-sm flex-1">
+                        <div class="text-gray-500">流量</div>
+                        <div class="text-gray-400 text-2xl font-bold font-mono transition-all duration-300" id="flowText">0</div>
+                        <div class="text-xs text-gray-600">目标：<span class="text-gray-500" id="targetFlowText">-- L/min</span></div>
+                    </div>
+                </div>
+                <div class="mt-auto border-t border-slate-800 pt-3 opacity-60">
+                    <div class="flex justify-between text-gray-500 mb-1 text-sm">
+                        <span>瓦斯浓度 <span id="gasStatusText" class="text-xs ml-1 text-gray-600">(联锁阈值 0.8%)</span></span>
+                        <span class="text-red-500 font-mono font-bold transition-colors duration-300 offline-blink" id="gasText">-- %</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                        <div id="gasBar" class="bg-gray-600 h-full w-[0%] transition-all duration-500"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel shrink-0 h-52">
+                <div class="panel-title mb-2">环境与安全监测</div>
+                <div class="grid grid-cols-2 gap-2 h-24 mb-3">
+                    <div class="cctv-container border-red-900/50">
+                        <div class="cctv-overlay"></div>
+                        <div class="text-red-500/70 text-2xl mb-1">⚠</div>
+                        <div class="text-gray-500 text-xs tracking-widest font-mono text-center">CAM 1<br>NO SIGNAL</div>
+                        <div class="cctv-rec">OFFLINE</div>
+                    </div>
+                    <div class="cctv-container border-red-900/50 bg-slate-900">
+                        <div class="cctv-overlay"></div>
+                        <div class="w-full h-full relative overflow-hidden flex flex-col items-center justify-center">
+                            <span class="text-red-500/70 text-2xl mb-1">📡</span>
+                            <span class="text-xs text-gray-500 z-10 tracking-widest font-mono text-center">雷达离线<br>连接超时</span>
+                        </div>
+                        <div class="cctv-rec" style="color: #64748b;">OFFLINE</div>
+                    </div>
+                </div>
+                <div class="flex justify-between items-center text-xs mt-auto opacity-60">
+                    <span>瓦斯监控总线：<span class="text-red-500 font-bold offline-blink">断开</span></span>
+                    <span>急停开关：<span class="text-gray-500">无法读取</span></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-span-6 flex flex-col gap-4 h-full">
+            <div id="globalStatusBar" class="text-center text-sm shrink-0 p-1 bg-red-900/20 rounded border border-red-900/50 transition-colors duration-300">
+                <span class="text-red-500 font-bold offline-blink" id="statusLabel">[系统离线 / 通信中断]</span> 
+                <span id="statusTime" class="font-mono ml-2 text-gray-500">2026-05-20 --:--:--</span>
+                <span class="text-red-500/70 ml-2" id="globalGasStatus">| 失去设备网关响应</span>
+            </div>
+            
+            <div class="flex-1 border border-slate-700 rounded-lg overflow-hidden model-area flex items-center justify-center relative">
+                <!-- 画面去色变灰，模拟离线失去控制感 -->
+                <img src="./3d-model.jpg" alt="3D地下模型监控区域" class="absolute inset-0 w-full h-full object-cover grayscale opacity-30 blur-[1px]" onerror="this.style.display='none'; document.getElementById('imagePlaceholder').style.display='flex';">
+                
+                <canvas id="jetCanvas" class="absolute inset-0 w-full h-full pointer-events-none z-10 hidden"></canvas>
+
+                <!-- 增加一个断网遮罩 -->
+                <div class="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-20">
+                    <svg class="w-16 h-16 text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414"></path></svg>
+                    <p class="text-xl text-gray-400 font-bold tracking-widest">设备通信网关已断开</p>
+                    <p class="text-sm text-gray-600 mt-2">请检查井下光纤环网或本安型交换机状态</p>
+                </div>
+
+                <div id="imagePlaceholder" class="text-slate-600 text-center z-0 px-6 flex flex-col items-center justify-center h-full hidden">
+                    <p class="mb-2 text-xl font-bold">3D 模型区域 (离线)</p>
+                </div>
+            </div>
+
+            <div class="panel h-40 shrink-0">
+                <div class="panel-title mb-1">安全联锁与操作日志</div>
+                <div id="alarmBanner" class="bg-slate-900 border border-slate-800 text-gray-500 p-2 mb-2 text-sm flex items-center gap-2 transition-colors duration-300">
+                    <span class="alarm-light inactive" id="alarmLight"></span>
+                    <span id="alarmTitle" class="font-bold text-gray-600">系统状态：</span>
+                    <span id="alarmText">数据总线未响应，当前数据已失效。</span>
+                </div>
+                
+                <div class="log-container flex-1 overflow-y-auto text-xs text-gray-500 space-y-1.5 font-mono" id="logPanel">
+                    <div><span class="text-gray-600">[10:25:01]</span> 系统初始化完毕，智能联动引擎启动</div>
+                    <div><span class="text-gray-600">[11:42:15]</span> <span class="text-yellow-600">警告：检测到控制网关网络延迟 > 1000ms</span></div>
+                    <div><span class="text-gray-600">[11:42:18]</span> <span class="text-red-700 font-bold">致命错误：失去与井下主控PLC的心跳连接！</span></div>
+                    <div><span class="text-gray-600">[11:42:19]</span> <span class="text-red-500">触发安全机制：已向井下发送紧急停机广播信号。</span></div>
+                    <div><span class="text-gray-600">[11:42:20]</span> 系统进入离线安全模式。等待网络恢复...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-span-3 flex flex-col gap-4 h-full">
+            <div class="panel">
+                <div class="panel-title">标准化作业控制 (已锁定)</div>
+                
+                <div class="flex gap-1 mb-6 bg-slate-900 p-1 rounded-md opacity-50">
+                    <button id="tab-sanding" class="flex-1 bg-slate-700 text-gray-400 py-1.5 rounded text-sm font-medium cursor-not-allowed">三定</button>
+                    <button id="tab-setting" class="flex-1 bg-transparent text-gray-600 py-1.5 rounded text-sm cursor-not-allowed">设置</button>
+                </div>
+
+                <div id="content-sanding" class="space-y-4 text-sm mb-6 opacity-40 pointer-events-none">
+                    <div class="flex items-center justify-between">
+                        <label class="flex items-center gap-2 text-gray-500"><input type="radio" name="ctrl" disabled> 定压力设置</label>
+                        <div class="flex items-center bg-slate-900 px-2 py-1.5 rounded border border-slate-700">
+                            <span class="text-gray-600 mr-1">[</span>
+                            <input type="number" value="--" class="w-8 bg-transparent text-gray-500 text-right outline-none font-bold" disabled>
+                            <span class="text-gray-600 ml-1 pl-1">MPa]</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <label class="flex items-center gap-2 text-gray-500"><input type="radio" name="ctrl" disabled> 定时间设置</label>
+                        <div class="flex items-center bg-slate-900 px-2 py-1.5 rounded border border-slate-700">
+                            <span class="text-gray-600 mr-1">[</span>
+                            <input type="number" placeholder="--" class="w-8 bg-transparent text-gray-500 text-right outline-none" disabled>
+                            <span class="text-gray-600 ml-1 pl-1 text-center inline-block w-[30px]">s]</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-3 mt-4">
+                    <button onclick="offlineWarning()" class="w-full bg-slate-800 text-gray-600 py-3 rounded-md font-bold tracking-widest text-lg border border-slate-700 cursor-not-allowed">一键启动</button>
+                    <button onclick="offlineWarning()" class="w-full bg-slate-800 text-gray-600 py-3 rounded-md font-bold tracking-widest text-lg border border-slate-700 cursor-not-allowed">安全停止</button>
+                </div>
+            </div>
+
+            <div class="panel flex-1">
+                <div class="panel-title">核心设备控制 (未连接)</div>
+                
+                <div class="mb-4 opacity-40 pointer-events-none">
+                    <div class="flex justify-between text-xs text-gray-500 mb-2">
+                        <span>高压泵变频调节</span>
+                        <span class="text-gray-500 font-mono">-- Hz</span>
+                    </div>
+                    <input type="range" min="0" max="50" value="0" class="w-full" disabled>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 text-sm mb-4">
+                    <button onclick="offlineWarning()" class="bg-slate-900 border border-slate-700 text-gray-600 py-1.5 rounded cursor-not-allowed">主泵: 状态未知</button>
+                    <button onclick="offlineWarning()" class="bg-slate-900 border border-slate-700 text-gray-600 py-1.5 rounded cursor-not-allowed">卸荷阀: 未知</button>
+                </div>
+
+                <div class="border-t border-slate-800 pt-3 mt-auto">
+                    <div class="text-xs text-gray-600 mb-2">钻具动作执行 (禁用)</div>
+                    <div class="grid grid-cols-3 gap-2 text-xs">
+                        <button onclick="offlineWarning()" class="bg-slate-900 border border-slate-800 text-gray-600 py-2 rounded cursor-not-allowed flex flex-col items-center justify-center gap-1">
+                            <span class="text-lg leading-none">↻</span><span>正转</span>
+                        </button>
+                        <button onclick="offlineWarning()" class="bg-slate-900 border border-slate-800 text-gray-600 py-2 rounded cursor-not-allowed flex flex-col items-center justify-center gap-1">
+                            <span class="text-lg leading-none">↑</span><span>推进</span>
+                        </button>
+                        <button onclick="offlineWarning()" class="bg-slate-900 border border-slate-800 text-gray-600 py-2 rounded cursor-not-allowed flex flex-col items-center justify-center gap-1">
+                            <span class="text-lg leading-none">↺</span><span>退钻</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // ----------------- ECharts 仪表盘 (灰色离线状态) -----------------
+        let pressureChart, flowChart;
+        function initGauge(elementId, max) {
+            var chartDom = document.getElementById(elementId);
+            var myChart = echarts.init(chartDom);
+            var option = {
+                series: [{
+                    type: 'gauge', radius: '100%', center: ['50%', '55%'], startAngle: 210, endAngle: -30, min: 0, max: max, splitNumber: 4,
+                    axisLine: { lineStyle: { width: 8, color: [ [1, '#1e293b'] ] } },
+                    pointer: { show: true, width: 3, itemStyle: {color: '#334155'} }, 
+                    axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false }, detail: { show: false }, data: [{ value: 0 }]
+                }]
+            };
+            myChart.setOption(option);
+            return myChart;
+        }
+        
+        // 初始化图表，数据均保持为0，不再更新
+        pressureChart = initGauge('pressureGauge', 100);
+        flowChart = initGauge('flowGauge', 300);
+
+        // ----------------- 逻辑控制 -----------------
+        const logPanel = document.getElementById('logPanel');
+
+        function getTimeString() {
+            const now = new Date();
+            return now.toTimeString().substring(0, 8);
+        }
+
+        function addLog(message, type = 'error') {
+            const div = document.createElement('div');
+            const timeSpan = `<span class="text-gray-600">[${getTimeString()}]</span>`;
+            div.innerHTML = `${timeSpan} <span class="text-red-500">${message}</span>`;
+            logPanel.appendChild(div);
+            logPanel.scrollTop = logPanel.scrollHeight;
+        }
+
+        // 拦截所有按钮点击
+        function offlineWarning() {
+            addLog("操作拒绝：系统处于离线模式，无法下发任何指令！");
+        }
+
+        // 系统时钟定时器 (依然走字，证明上位机程序没死，只是断网)
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('statusTime').innerText = now.toISOString().split('T')[0] + " " + now.toTimeString().substring(0, 8);
+        }, 1000);
+
+        window.addEventListener('resize', function() {
+            pressureChart.resize();
+            flowChart.resize();
+        });
+    </script>
+</body>
+</html>
